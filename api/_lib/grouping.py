@@ -3,7 +3,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from .constants import STRICT_KEYS, TRIUNE_COLUMNS
-from .crossref import find_crossref
+from .crossref import find_crossref, lookup as crossref_lookup, match_category
 from .parsing import norm_key, normalize, parse_tag_for_sort
 
 
@@ -137,19 +137,27 @@ def build_rows_toprow(df: pd.DataFrame) -> pd.DataFrame:
 
 def apply_crossref(df: pd.DataFrame,
                    target_brand: str,
-                   overrides: Optional[Dict] = None) -> pd.DataFrame:
-    """Fill XBRAND / XMODEL columns. `target_brand` is the global default.
+                   overrides: Optional[Dict] = None,
+                   customer_rules: Optional[Dict[str, str]] = None) -> pd.DataFrame:
+    """Fill XBRAND / XMODEL columns.
 
-    `overrides` is a dict keyed `"<norm_brand>|<norm_model>"` where each value
-    is either:
-        - a string (legacy: just the target brand), or
-        - a dict {"target_brand"?: str, "xmodel"?: str}
-    If `xmodel` is present in the override, it's used verbatim (for picking one
-    specific model out of a comma-separated list). If `target_brand` is absent,
-    falls back to the global `target_brand`.
+    Resolution order per row:
+      1. Per-row override (if set).
+      2. customer_rules: map of {category: brand} — looks up the row's category
+         from the crossref DB, then chooses the brand for that category.
+      3. Global target_brand fallback.
     """
     df = df.copy()
     overrides = overrides or {}
+    customer_rules = customer_rules or {}
+
+    def default_for(src_brand: str, src_model: str) -> str:
+        if customer_rules:
+            cat = match_category(src_brand, src_model)
+            if cat and cat in customer_rules:
+                return customer_rules[cat]
+            return ""
+        return target_brand
 
     xbrands: list = []
     xmodels: list = []
@@ -158,7 +166,8 @@ def apply_crossref(df: pd.DataFrame,
         o = overrides.get(key)
 
         if isinstance(o, dict):
-            tb = o.get("target_brand", target_brand) or ""
+            tb = o.get("target_brand") if "target_brand" in o else default_for(b, m)
+            tb = tb or ""
             if "xmodel" in o:
                 xbrands.append(tb)
                 xmodels.append(o.get("xmodel") or "")
@@ -171,7 +180,6 @@ def apply_crossref(df: pd.DataFrame,
             continue
 
         if isinstance(o, str):
-            # legacy string form = just the target brand
             tb = o
             if not tb:
                 xbrands.append(""); xmodels.append("")
@@ -180,12 +188,12 @@ def apply_crossref(df: pd.DataFrame,
                 xmodels.append(find_crossref(b, m, tb))
             continue
 
-        # No override → global default
-        if not target_brand:
+        tb = default_for(b, m)
+        if not tb:
             xbrands.append(""); xmodels.append("")
         else:
-            xbrands.append(target_brand)
-            xmodels.append(find_crossref(b, m, target_brand))
+            xbrands.append(tb)
+            xmodels.append(find_crossref(b, m, tb))
 
     df["XBRAND"] = xbrands
     df["XMODEL"] = xmodels
@@ -199,12 +207,15 @@ def takeoff_pipeline(df_raw: pd.DataFrame,
                      manual_products: Optional[List[str]] = None,
                      manual_tags: Optional[Dict[str, List[str]]] = None,
                      target_brand: str = "",
-                     crossref_overrides: Optional[Dict[str, str]] = None) -> pd.DataFrame:
+                     crossref_overrides: Optional[Dict[str, str]] = None,
+                     customer_rules: Optional[Dict[str, str]] = None) -> pd.DataFrame:
     norm, _ = normalize(df_raw, mapping)
     grouped = apply_grouping_strict(norm)
     reordered = reorder_grouped(grouped, sort_keys or [], ascending=ascending,
                                 manual_products=manual_products, manual_tags=manual_tags)
-    with_xref = apply_crossref(reordered, target_brand, overrides=crossref_overrides)
+    with_xref = apply_crossref(reordered, target_brand,
+                               overrides=crossref_overrides,
+                               customer_rules=customer_rules)
     rows = build_rows_toprow(with_xref)
     cols = [c for c in rows.columns if not c.startswith("_")]
     return rows[cols]

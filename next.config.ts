@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV !== "production";
-const DEV_API = process.env.DEV_API_URL || "http://localhost:3001";
+const DEV_API = process.env.DEV_API_URL || "http://localhost:3011";
 
 const config: NextConfig = {
   experimental: {

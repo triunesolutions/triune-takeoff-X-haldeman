@@ -11,6 +11,19 @@ export const MAPPABLE_COLUMNS = TRIUNE_COLUMNS.filter(
   (c) => c !== "XBRAND" && c !== "XMODEL"
 );
 
+// Display labels for internal column IDs. Keep internal code using the raw
+// names (BRAND/MODEL/XBRAND/XMODEL); labels are applied only at render time.
+export const COLUMN_LABELS: Record<string, string> = {
+  BRAND: "SCHEDULE BRAND",
+  MODEL: "SCHEDULE MODEL",
+  XBRAND: "BRAND",
+  XMODEL: "MODEL",
+};
+
+export function columnLabel(c: string): string {
+  return COLUMN_LABELS[c] ?? c;
+}
+
 export const DEFAULT_COLORS = {
   header: "#ECF3FA",
   product: "#92D050",

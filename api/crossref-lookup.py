@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from _lib.crossref import find_crossref
+from _lib.crossref import brands_by_category, lookup
 
 
 class handler(BaseHTTPRequestHandler):
@@ -14,27 +14,33 @@ class handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("content-length", 0))
             body = self.rfile.read(length) if length > 0 else b""
             payload = json.loads(body) if body else {}
+            bbc = brands_by_category()
 
             items = payload.get("items")
             if items and isinstance(items, list):
-                # Batch lookup: [{src_brand, src_model, target_brand}, ...]
                 out = []
                 for it in items:
+                    xm, cat = lookup(
+                        it.get("src_brand", ""),
+                        it.get("src_model", ""),
+                        it.get("target_brand", ""),
+                    )
                     out.append({
-                        "xmodel": find_crossref(
-                            it.get("src_brand", ""),
-                            it.get("src_model", ""),
-                            it.get("target_brand", ""),
-                        ),
+                        "xmodel": xm,
+                        "category": cat,
+                        "brands_in_category": bbc.get(cat, []),
                     })
                 return self._json(200, {"results": out})
 
-            # Single lookup
             src_brand = payload.get("src_brand", "")
             src_model = payload.get("src_model", "")
             target_brand = payload.get("target_brand", "")
-            xmodel = find_crossref(src_brand, src_model, target_brand)
-            return self._json(200, {"xmodel": xmodel})
+            xm, cat = lookup(src_brand, src_model, target_brand)
+            return self._json(200, {
+                "xmodel": xm,
+                "category": cat,
+                "brands_in_category": bbc.get(cat, []),
+            })
         except Exception as e:
             return self._json(500, {"error": f"Server error: {e}"})
 

@@ -5,8 +5,9 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 
-from .constants import TRIUNE_COLUMNS
+from .constants import TRIUNE_COLUMNS, label
 
 
 def _fg(h: str) -> str:
@@ -37,11 +38,16 @@ def style_takeoff_and_raw_bytes(
     ws.title = "Triune Takeoff Haldeman"
 
     for c_idx, col in enumerate(TRIUNE_COLUMNS, start=1):
-        cell = ws.cell(row=1, column=c_idx, value=col)
+        cell = ws.cell(row=1, column=c_idx, value=label(col))
         cell.fill = header_fill
         cell.font = Font(bold=True, color="000000")
         cell.border = border
         cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    # Cells keyed by their option-list string → list of cell coordinates.
+    # One DataValidation per unique option list, attached to every matching
+    # cell, so the workbook stays compact when many rows share candidates.
+    dv_cells: dict = {}
 
     for r_idx, row in enumerate(takeoff_df.itertuples(index=False, name=None), start=2):
         for c_idx, value in enumerate(row, start=1):
@@ -52,6 +58,28 @@ def style_takeoff_and_raw_bytes(
             cell.alignment = Alignment(horizontal="left", vertical="center")
             if col_name == "QTY":
                 cell.number_format = "#,##0"
+            if col_name == "XMODEL" and isinstance(value, str) and "," in value:
+                opts = [o.strip() for o in value.split(",") if o.strip()]
+                if len(opts) > 1:
+                    # Excel 'list' formula must not exceed 255 chars including quotes.
+                    joined = ",".join(opts)
+                    if len(joined) <= 250:
+                        key = joined
+                        dv_cells.setdefault(key, []).append(cell.coordinate)
+
+    for opts_csv, coords in dv_cells.items():
+        dv = DataValidation(
+            type="list",
+            formula1=f'"{opts_csv}"',
+            allow_blank=True,
+            showDropDown=False,  # openpyxl-ism: False = show the arrow
+            showErrorMessage=False,  # don't flag the pre-filled "A, B" default
+        )
+        dv.prompt = "Pick one model from the cross-reference options"
+        dv.promptTitle = "Select model"
+        for coord in coords:
+            dv.add(coord)
+        ws.add_data_validation(dv)
 
     qty_idx = TRIUNE_COLUMNS.index("QTY") + 1
     prod_idx = 1

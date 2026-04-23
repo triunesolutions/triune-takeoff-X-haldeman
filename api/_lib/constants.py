@@ -4,6 +4,19 @@ TRIUNE_COLUMNS = [
     "ACCESSORIES1", "ACCESSORIES2", "REMARK",
 ]
 
+# Display labels for TRIUNE_COLUMNS (used for Excel header row + UI preview
+# headers + column-mapping labels). Internal code keeps using the raw names.
+COLUMN_LABELS = {
+    "BRAND": "SCHEDULE BRAND",
+    "MODEL": "SCHEDULE MODEL",
+    "XBRAND": "BRAND",
+    "XMODEL": "MODEL",
+}
+
+
+def label(col: str) -> str:
+    return COLUMN_LABELS.get(col, col)
+
 # Columns the user maps from the source file. XBRAND/XMODEL are derived via
 # cross-reference, not mapped.
 MAPPABLE_COLUMNS = [c for c in TRIUNE_COLUMNS if c not in ("XBRAND", "XMODEL")]
