@@ -67,9 +67,10 @@ def resolve_brand(name: str) -> Optional[str]:
     n = _norm(name)
     if n in idx:
         return idx[n]
-    for k, v in idx.items():
-        if k.startswith(n) or n.startswith(k):
-            return v
+    if len(n) >= 4:
+        for k, v in idx.items():
+            if k.startswith(n) or n.startswith(k):
+                return v
     return None
 
 
@@ -80,30 +81,39 @@ def _split_models(value: str) -> List[str]:
 
 
 def _model_matches(row_value: str, query_model: str) -> bool:
+    """Exact normalized-token match. Whitespace/punctuation-insensitive but no
+    substring fallback — '300' must not match '300F', and 'ACB' must not match
+    'ACBL-HE'."""
     if not row_value or not query_model:
         return False
     q = _norm(query_model)
     if not q:
         return False
-    for candidate in _split_models(row_value):
-        c = _norm(candidate)
-        if c == q:
-            return True
-        if len(q) >= 3 and (q in c or c in q):
-            return True
-    return False
+    return any(_norm(c) == q for c in _split_models(row_value))
 
 
 def _find_row(src_brand: str, src_model: str) -> Optional[Dict]:
-    """Locate the first data row whose src_brand column matches src_model."""
+    """Find the best data row whose src_brand cell exactly contains src_model.
+
+    When several rows match, prefer the most specific source cell (fewest
+    listed model tokens) so a row whose source column is exactly 'CSP' beats
+    a row that lists 'CSP, SP, SP-A, SP-B'."""
     src_canon = resolve_brand(src_brand)
     if not src_canon:
         return None
+    best: Optional[Dict] = None
+    best_token_count = 10**9
     for row in _db()["data"]:
         rv = row["brands"].get(src_canon, "")
-        if rv and _model_matches(rv, src_model):
-            return row
-    return None
+        if not rv or not _model_matches(rv, src_model):
+            continue
+        tokens = len(_split_models(rv))
+        if tokens < best_token_count:
+            best = row
+            best_token_count = tokens
+            if tokens == 1:
+                break
+    return best
 
 
 def lookup(src_brand: str, src_model: str, target_brand: str) -> Tuple[str, str]:

@@ -138,26 +138,42 @@ def build_rows_toprow(df: pd.DataFrame) -> pd.DataFrame:
 def apply_crossref(df: pd.DataFrame,
                    target_brand: str,
                    overrides: Optional[Dict] = None,
-                   customer_rules: Optional[Dict[str, str]] = None) -> pd.DataFrame:
+                   customer_rules: Optional[Dict] = None) -> pd.DataFrame:
     """Fill XBRAND / XMODEL columns.
 
     Resolution order per row:
       1. Per-row override (if set).
-      2. customer_rules: map of {category: brand} — looks up the row's category
-         from the crossref DB, then chooses the brand for that category.
+      2. customer_rules: map of {category: brand-or-[brands]} — looks up the
+         row's category, then chooses the brand for that category. A list
+         value is a fallback chain: try each brand in order; the first one
+         that yields a non-empty xmodel wins. If none does, the FIRST brand
+         is used with an empty xmodel (so the column header still reflects
+         the customer's preferred brand).
       3. Global target_brand fallback.
     """
     df = df.copy()
     overrides = overrides or {}
     customer_rules = customer_rules or {}
 
-    def default_for(src_brand: str, src_model: str) -> str:
+    def default_brands(src_brand: str, src_model: str) -> List[str]:
         if customer_rules:
             cat = match_category(src_brand, src_model)
-            if cat and cat in customer_rules:
-                return customer_rules[cat]
-            return ""
-        return target_brand
+            rule = customer_rules.get(cat) if cat else None
+            if rule is None:
+                return []
+            return [rule] if isinstance(rule, str) else list(rule)
+        return [target_brand] if target_brand else []
+
+    def resolve_chain(src_brand: str, src_model: str, chain: List[str]):
+        """Walk fallback chain → (chosen_brand, xmodel)."""
+        chain = [b for b in chain if b]
+        if not chain:
+            return ("", "")
+        for tb in chain:
+            xm = find_crossref(src_brand, src_model, tb)
+            if xm:
+                return (tb, xm)
+        return (chain[0], "")
 
     xbrands: list = []
     xmodels: list = []
@@ -166,34 +182,32 @@ def apply_crossref(df: pd.DataFrame,
         o = overrides.get(key)
 
         if isinstance(o, dict):
-            tb = o.get("target_brand") if "target_brand" in o else default_for(b, m)
-            tb = tb or ""
+            if "target_brand" in o:
+                tb = o.get("target_brand") or ""
+                if "xmodel" in o:
+                    xbrands.append(tb); xmodels.append(o.get("xmodel") or "")
+                    continue
+                if not tb:
+                    xbrands.append(""); xmodels.append("")
+                    continue
+                xbrands.append(tb); xmodels.append(find_crossref(b, m, tb))
+                continue
             if "xmodel" in o:
-                xbrands.append(tb)
-                xmodels.append(o.get("xmodel") or "")
+                # Override has only xmodel — keep the chain's chosen brand.
+                cb, _ = resolve_chain(b, m, default_brands(b, m))
+                xbrands.append(cb); xmodels.append(o.get("xmodel") or "")
                 continue
-            if not tb:
-                xbrands.append(""); xmodels.append("")
-                continue
-            xbrands.append(tb)
-            xmodels.append(find_crossref(b, m, tb))
-            continue
 
         if isinstance(o, str):
             tb = o
             if not tb:
                 xbrands.append(""); xmodels.append("")
             else:
-                xbrands.append(tb)
-                xmodels.append(find_crossref(b, m, tb))
+                xbrands.append(tb); xmodels.append(find_crossref(b, m, tb))
             continue
 
-        tb = default_for(b, m)
-        if not tb:
-            xbrands.append(""); xmodels.append("")
-        else:
-            xbrands.append(tb)
-            xmodels.append(find_crossref(b, m, tb))
+        cb, xm = resolve_chain(b, m, default_brands(b, m))
+        xbrands.append(cb); xmodels.append(xm)
 
     df["XBRAND"] = xbrands
     df["XMODEL"] = xmodels
